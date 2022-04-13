@@ -1,4 +1,4 @@
-# NFT-exchange-platform
+# Art-Safebox
 COMP3334 Computer Security Group Project
 
 # 分工
