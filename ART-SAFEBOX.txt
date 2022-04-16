@@ -17,7 +17,7 @@ ITERATION TYPE:
 	- BUY      {'COLLECTION_ID', 'USER_ID', 'TOKEN'}                         <- FAILED+MSG/OK         POST
 	- RESPONCE {'timestamp', 'status': [accept/refuse], 'TOKEN', 'PRIV_KEY'} <- FAILED+MSG/OK         POST
 	- RECHARGE {'USER_ID', 'AMOUNT', 'TOKEN'}                			     <- FAILED+MSG/OK         POST
-	- DOWNLOAD {'COLLECTION_ID', 'TOKEN', 'PRIV_KEY'}                              <- FAILED/OK             POST
+	- DOWNLOAD {'COLLECTION_ID', 'TOKEN', 'PRIV_KEY'}                        <- FAILED/OK             POST
 
 Database Entity
 User:
