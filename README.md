@@ -39,7 +39,9 @@ Collection:
 - price += 1 当销售之后
 - status: "PENDING", "CONFIRMED"
 
-
+# reference
+- [Python Notebook 不同文件互相引用](https://www.jianshu.com/p/4850ad2a8516)
+- [中泰证券 NFT 技术分析](https://dfscdn.dfcfw.com/download/A2_cms_f_20220216123508144922&direct=1&abc3847.pdf)
 
 
 
