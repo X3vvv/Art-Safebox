@@ -497,7 +497,7 @@ class User:
         return User._rsa_decrypt(rsa_encrypted_data, priv_key.encode("utf-8"))
 
     def update_db(
-        self, validation_file: bytes, pub_key: str, balance: float,
+        self, validation_file: bytes =None, pub_key: str =None, balance: float =None,
     ):
         User.db.update_user(self.id, validation_file, pub_key, balance)
 
@@ -995,6 +995,7 @@ class Controller:
         creator = self._find_user(creator_id)
         _, aes_key = creator.decrypt_validation_file(priv_key)
         new_collection = Collection.new(collection_id, creator_id, raw_data, aes_key)
+        creator.collections.append(new_collection)
         self._add_collection(new_collection)
 
         # create a notice and add to user and Controller
