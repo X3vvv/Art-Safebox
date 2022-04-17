@@ -1,18 +1,3 @@
-# ## TODO
-#
-# 1. 确保所有数据库命令都在`DBmanager`中实现，常用的数据库操作可以利用各个 model 中的 db 类变量，打包作为 model 的方法，从而被调用。
-# 2. ~~完成 Controller.sign_in() 的实现~~
-# 3. 实现 User.is_online()
-# 4. 完成 Controller.init()
-# 5. 完成 Controller.\_find_transactionon()
-# 6. 完成 Collection.updata_db()
-# 7. 完成 DBmanager.getxx_by_id() 到生成对应实例的过程
-# 8. 优化 Controller.init_user_list() 等 init 函数，目前每初始化一个用户需要调两次数据库
-#
-# ERROR
-# 1. DBmanager.update_collection()，使用后 price 和 user_id 顺序会交换
-# 2. DBmanager 的 transactions 多了一个参数 NULL
-
 import sqlite3
 import json
 import base64
@@ -20,6 +5,8 @@ import io
 import time
 import typing
 import copy
+import os
+from urllib import response
 
 from Crypto import Random
 from Crypto.PublicKey import RSA
@@ -33,7 +20,7 @@ class DBmanager:
     DATABASE_PATH = "./demo.db"
     COLLECTIONS_TABLE_NAME = "collections"
     USER_TABLE_NAME = "users"
-    transactionS_TABLE_NAME = "transactions"
+    TRANSACTIONS_TABLE_NAME = "transactions"
 
     def __init__(self):
         # init connection, db will be created if doesnt exist
@@ -95,13 +82,13 @@ class DBmanager:
             len(
                 self.cur.execute(
                     "SELECT name FROM sqlite_master WHERE type='table' AND name='{}';".format(
-                        self.transactionS_TABLE_NAME
+                        self.TRANSACTIONS_TABLE_NAME
                     )
                 ).fetchall()
             )
             > 0
         ):
-            print("Find '{}' table in db.".format(self.transactionS_TABLE_NAME))
+            print("Find '{}' table in db.".format(self.TRANSACTIONS_TABLE_NAME))
             return
         # id | timestamp | type | content | collection_id | src_user_id | dest_user_id | status
         self.cur.execute(
@@ -115,11 +102,11 @@ class DBmanager:
                 DEST_USER_ID TEXT, \
                 STATUS TEXT, \
                 AMOUNT REAL);".format(
-                self.transactionS_TABLE_NAME
+                self.TRANSACTIONS_TABLE_NAME
             )
         )
         self.conn.commit()
-        print("Users table initialized.")
+        print("Transaction table initialized.")
 
     # manage collections TABLE
 
@@ -174,13 +161,20 @@ class DBmanager:
             [owner_id, price, encrypted_content, preview, status],
         ):  # field_name is the name of the variable
             if field_value:
+                # self.cur.execute(
+                #     "UPDATE '{}' SET '{}' = '{}' WHERE id = '{}';".format(
+                #         self.COLLECTIONS_TABLE_NAME,
+                #         field_name,
+                #         field_value,
+                #         collection_id,
+                #     )
+                # )
                 self.cur.execute(
-                    "UPDATE '{}' SET '{}' = '{}' WHERE id = '{}';".format(
-                        self.COLLECTIONS_TABLE_NAME,
-                        field_name,
-                        field_value,
-                        collection_id,
-                    )
+                    "UPDATE '{}' SET ? = ? WHERE id = ?;".format(
+                        self.COLLECTIONS_TABLE_NAME
+                    ),
+                    field_name,
+                    (field_value, collection_id),
                 )
                 self.conn.commit()
 
@@ -227,7 +221,11 @@ class DBmanager:
     ):
         self.cur.execute(
             "INSERT INTO '{}' VALUES('{}', '{}', '{}', '{}')".format(
-                self.USER_TABLE_NAME, user_id, validation_file, pub_key, balance,
+                self.USER_TABLE_NAME,
+                user_id,
+                validation_file,
+                pub_key,
+                balance,
             )
         )
         self.conn.commit()
@@ -257,7 +255,10 @@ class DBmanager:
             if field_value:
                 self.cur.execute(
                     "UPDATE '{}' SET '{}' = '{}' WHERE id = '{}';".format(
-                        self.USER_TABLE_NAME, field_name, field_value, user_id,
+                        self.USER_TABLE_NAME,
+                        field_name,
+                        field_value,
+                        user_id,
                     )
                 )
                 self.conn.commit()
@@ -294,10 +295,10 @@ class DBmanager:
     ):
         self.cur.execute(
             "INSERT INTO '{}' (TIMESTAMP, TYPE, CONTENT, COLLECTION_ID, SRC_USER_ID, DEST_USER_ID, STATUS, AMOUNT) VALUES('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')".format(
-                self.transactionS_TABLE_NAME,
+                self.TRANSACTIONS_TABLE_NAME,
                 timestamp,
                 type,
-                content,
+                content.replace("'", ""),
                 collection_id,
                 src_user_id,
                 dest_user_id,
@@ -308,7 +309,7 @@ class DBmanager:
         self.conn.commit()
 
     def get_all_transactions(self):
-        self.cur.execute("SELECT * FROM '{}'".format(self.transactionS_TABLE_NAME))
+        self.cur.execute("SELECT * FROM '{}'".format(self.TRANSACTIONS_TABLE_NAME))
         return self.cur.fetchall()
 
     def get_transactions_by_user_id(self, user_id):
@@ -318,7 +319,7 @@ class DBmanager:
         """
         self.cur.execute(
             "SELECT * FROM '{}' WHERE src_user_id = '{}' OR dest_user_id = '{}'".format(
-                self.transactionS_TABLE_NAME, user_id, user_id
+                self.TRANSACTIONS_TABLE_NAME, user_id, user_id
             )
         )
         res = self.cur.fetchall()
@@ -335,8 +336,8 @@ class DBmanager:
 class User:
     """
     If want to User class, must first call User.connect_db() first.
-    Note: 
-        1. Constructors and public methods should check User.db == None first, 
+    Note:
+        1. Constructors and public methods should check User.db == None first,
             since connect to db first is the **Code of Conduct**.
         2. When use db, always call User.db (cls.db is also acceptable but to
             unify we dont use), and check User.db==None at the begining.
@@ -497,7 +498,10 @@ class User:
         return User._rsa_decrypt(rsa_encrypted_data, priv_key.encode("utf-8"))
 
     def update_db(
-        self, validation_file: bytes =None, pub_key: str =None, balance: float =None,
+        self,
+        validation_file: bytes = None,
+        pub_key: str = None,
+        balance: float = None,
     ):
         User.db.update_user(self.id, validation_file, pub_key, balance)
 
@@ -514,7 +518,10 @@ class User:
                 "Please connect User class to DBmanager by calling User.connect_db() first."
             )
         User.db.add_user(
-            self.id, self.validation_file, self.pub_key, self.balance,
+            self.id,
+            self.validation_file,
+            self.pub_key,
+            self.balance,
         )
 
     def _get_collections(id):
@@ -580,8 +587,8 @@ class User:
 class Collection:
     """
     If want to Collection class, must first call Collection.connect_db() first.
-    Note: 
-        1. Constructors and public methods should check Collection.db == None first, 
+    Note:
+        1. Constructors and public methods should check Collection.db == None first,
             since connect to db first is the **Code of Conduct**.
         2. When use db, always call Collection.db (cls.db is also acceptable but to
             unify we dont use), and check Collection.db==None at the begining.
@@ -643,7 +650,7 @@ class Collection:
         return cls(id, owner_id, price, encrypted_content, preview, status)
 
     @classmethod
-    def new(cls, id, owner_id, raw_data, aes_key:str):
+    def new(cls, id, owner_id, raw_data, aes_key: str):
         """Create a new collection and add to database."""
         if Collection.db == None:
             raise RuntimeError(
@@ -652,7 +659,7 @@ class Collection:
         if cls.if_id_exist(id):
             raise AttributeError("Collection id already exists, please use another id.")
         price = cls._DEFAULT_PRICE
-        aes_bytes = base64.b64decode(aes_key.encode('utf-8'))
+        aes_bytes = base64.b64decode(aes_key.encode("utf-8"))
         encrypted_content = cls._encrypt_content(raw_data, aes_bytes)
         preview = cls._gen_preview(raw_data)
         status = cls._STATUS_CONFIRMED
@@ -718,13 +725,13 @@ class Collection:
         # print("Encrypt result:", result)
         return result
 
-    def _decrypte_content(data, aes_key:str) -> typing.Union[bytes, None]:
+    def _decrypte_content(data, aes_key: str) -> typing.Union[bytes, None]:
         """
         Decrypt content using AES (CTR mode, allow arbitrary length of data).
         @param data: json serialized string (e.g., {"nonce": '4Sa\we', "ciphertext": 'wgS2F=D3'})
         @return decrypted bytes data if succefully decrypt, otherwise None.
         """
-        aes_key_bytes = base64.b64decode(aes_key.encode('utf-8'))
+        aes_key_bytes = base64.b64decode(aes_key.encode("utf-8"))
         try:
             b64 = json.loads(data)
             nonce = base64.b64decode(b64["nonce"])
@@ -752,15 +759,30 @@ class Collection:
     def _gen_preview(raw_data):
         """Generate low resolution thumbnail and return its bytes data."""
         PREVIEW_SIZE = (210, 294)  # default collection thubnail size (width, height)
-        
+
         img = Image.open(io.BytesIO(raw_data))
         img.thumbnail(PREVIEW_SIZE)
         img_byte_stream = io.BytesIO()
         img.save(img_byte_stream, format=img.format)
         return img_byte_stream.getvalue()
 
-    def update_db(self):
-        self.db.update_collection(self.id, owner_id=new_owner_id)
+    def update_db(
+        self,
+        owner_id=None,
+        price=None,
+        encrypted_content=None,
+        preview=None,
+        status=None,
+    ):
+        self.db.update_collection(
+            self.id,
+            collection_id=self.id,
+            owner_id=owner_id,
+            price=price,
+            encrypted_content=encrypted_content,
+            preview=preview,
+            status=status,
+        )
 
     def update_owner(self, old_owner: User, new_owner: User, priv_key: str):
         """
@@ -803,8 +825,8 @@ class Collection:
 class Transaction:
     """
     If want to Transaction class, must first call Transaction.connect_db() first.
-    Note: 
-        1. Constructors and public methods should check Transaction.db == None first, 
+    Note:
+        1. Constructors and public methods should check Transaction.db == None first,
             since connect to db first is the **Code of Conduct**.
         2. When use db, always call Transaction.db (cls.db is also acceptable but to
             unify we dont use), and check Transaction.db==None at the begining.
@@ -851,7 +873,7 @@ class Transaction:
 
         self.timestamp = timestamp
         self.type = type
-        self.content = content
+        self.content = content.replace("'", "")
         self.collection_id = collection_id
         self.src_user_id = src_user_id
         self.dest_user_id = dest_user_id
@@ -873,7 +895,7 @@ class Transaction:
         new_transaction = cls(
             time.time(),
             type,
-            content,
+            content.replace("'", ""),
             collection_id,
             src_user_id,
             dest_user_id,
@@ -914,12 +936,23 @@ class Transaction:
             self.amount,
         )
 
+    def __repr__(self):
+        return "[{}] {}->{}: {} | {} | {} | {}".format(
+            self.timestamp or "None",
+            self.src_user_id or "None",
+            self.dest_user_id or "None",
+            self.content.replace("'", "") or "None",
+            self.status or "None",
+            self.amount or "None",
+            self.type or "None",
+        )
+
 
 class Controller:
 
     db = None
 
-    def __init__(self):
+    def __init__(self, preview_store_path: str):
         Controller.db = DBmanager()
         # maintain these lists to improve the searching speed
         self._init_models()
@@ -928,12 +961,22 @@ class Controller:
         self._collection_list = self._init_collection_list()
         self._transaction_list = self._init_transaction_list()
 
+        self.preview_store_path = preview_store_path
+        self.store_all_preview_to_local()
+
         # do rest initialization
         pass
 
+    def store_all_preview_to_local(self):
+        for collection in self._collection_list:
+            raw_data = collection.preview
+            img = Image.open(io.BytesIO(raw_data))
+            out_path = os.path.join(self.preview_store_path, collection.id)
+            img.save(out_path)
+
     def sign_up(self, user_id: str) -> str:
         """
-        Sign up a user, user only need to provide a unique username as id. 
+        Sign up a user, user only need to provide a unique username as id.
         Return user's private key if success, otherwise None.
         (Note: user_id cannot include whitespace.)
         """
@@ -1013,7 +1056,16 @@ class Controller:
 
         return True
 
-    def buy(self, buyer_id: str, collection_id: str):
+    def buy(self, buyer_id: str, collection_id: str, priv_key: str):
+        """
+        User (id=buyer_id) send a buy request to the collection's owner.
+        Return Fales if buyer dont have enough money.
+        (Note: buyer's money will be reduced only when owner accept the buying request)
+        """
+        self.__abandond_buy(buyer_id, collection_id)
+        self._accept_a_request(buy_request, collection, buyer, owner, priv_key)
+
+    def __abandond_buy(self, buyer_id: str, collection_id: str):
         """
         User (id=buyer_id) send a buy request to the collection's owner.
         Return Fales if buyer dont have enough money.
@@ -1044,7 +1096,7 @@ class Controller:
 
         # create buying request
         buy_request = Transaction.new(
-            Transaction.REQUEST_TYPE,
+            Transaction.TYPE_REQUEST,
             "{} to {}: requested to buy {}.".format(buyer_id, owner_id, collection_id),
             collection_id,
             buyer_id,
@@ -1057,7 +1109,7 @@ class Controller:
         owner.add_transaction(buy_request)
         self._add_transaction(buy_request)
 
-    def response(
+    def __abandond_response(
         self, user_id: str, transaction: Transaction, accept: bool, priv_key: str = None
     ):
         """
@@ -1100,6 +1152,11 @@ class Controller:
             self._reject_a_request(transaction, collection, buyer, seller)
             return False
 
+    def response(
+        self, user_id: str, transaction: Transaction, accept: bool, priv_key: str = None
+    ):
+        return True
+
     def recharge(self, user_id: str, amount: float):
         """Recharge XAV coins to user's account. Return True if success."""
         # add amount of XAV to user's account (User instance)
@@ -1134,7 +1191,7 @@ class Controller:
 
     def _init_user_list(self) -> typing.List[User]:
         """
-        Initialized Controller._user_list by finding and fetching all user info from 
+        Initialized Controller._user_list by finding and fetching all user info from
         database, and load to User instances. Return a list of all Users.
         """
         all_user_list = []
@@ -1146,7 +1203,7 @@ class Controller:
 
     def _init_collection_list(self) -> typing.List[Collection]:
         """
-        Initialized Controller._collection_list by finding and fetching all collection info from 
+        Initialized Controller._collection_list by finding and fetching all collection info from
         database, and load to Collection instances. Return a list of all Collections.
         """
         all_collection_list = []
@@ -1158,7 +1215,7 @@ class Controller:
 
     def _init_transaction_list(self) -> typing.List[Transaction]:
         """
-        Initialized Controller._transaction_list by finding and fetching all transaction info from 
+        Initialized Controller._transaction_list by finding and fetching all transaction info from
         database, and load to Transaction instances. Return a list of all Transactions.
         """
         all_transaction_list = []
@@ -1179,7 +1236,7 @@ class Controller:
             transaction = Transaction(
                 timestamp,
                 type,
-                content,
+                content.replace("'", ""),
                 collection_id,
                 src_user_id,
                 dest_user_id,
@@ -1306,7 +1363,7 @@ class Controller:
         """
         Reject a buying request.
 
-        Update request status as REJECTED, and return money to buyer, then create and 
+        Update request status as REJECTED, and return money to buyer, then create and
         send an UNSEEN notice for both buyer and seller to notify the reject behavior.
         """
         request.status = Transaction.STATUS_REJECTED  # update request status
@@ -1412,3 +1469,43 @@ class Controller:
             )
         )
 
+
+backend_requests = dict()
+backend_results = dict()
+
+
+class Main:
+    ctrl = None
+
+    def __init__(self, ctrl: Controller):
+        Main.ctrl = ctrl
+
+    def start():
+        """Start event loop."""
+        while 1:
+            if len(backend_requests) != 0:
+                # get one request
+                for req_name_id in backend_requests.keys():
+                    params = backend_requests.pop(req_name_id)
+                    break
+                req_name = req_name_id.split("-")[0]
+                print(req_name, params)
+                if req_name == "signin":
+                    ret = Main.ctrl.sign_in(params[0], params[1])
+                elif req_name == "signup":
+                    ret = Main.ctrl.sign_up(params[0])
+                elif req_name == "upload":
+                    ret = Main.ctrl.upload(params[0], params[1], params[2], params[3])
+                elif req_name == "buy":
+                    ret = Main.ctrl.buy(params[0], params[1])
+                elif req_name == "response":
+                    ret = Main.ctrl.response(params[0], params[1], params[2], params[3])
+                elif req_name == "recharge":
+                    ret = Main.ctrl.recharge(params[0], params[1])
+                elif req_name == "download":
+                    ret = Main.ctrl.download(params[0], params[1])
+                else:
+                    raise ValueError(
+                        "Illegal function name, can only be within (signin, signup, upload, buy, response, recharge, download)"
+                    )
+                backend_results[req_name_id] = ret
