@@ -113,7 +113,7 @@ class DBmanager:
                 COLLECTION_ID TEXT, \
                 SRC_USER_ID TEXT, \
                 DEST_USER_ID TEXT, \
-                STATUS TEXT \
+                STATUS TEXT, \
                 AMOUNT REAL);".format(
                 self.transactionS_TABLE_NAME
             )
@@ -139,7 +139,7 @@ class DBmanager:
                 price,
                 owner_id,
                 encrypted_content,
-                preview,
+                memoryview(preview),
                 status,
             )
         )
@@ -293,7 +293,7 @@ class DBmanager:
         amount: float,
     ):
         self.cur.execute(
-            "INSERT INTO '{}' VALUES('NULL', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')".format(
+            "INSERT INTO '{}' (TIMESTAMP, TYPE, CONTENT, COLLECTION_ID, SRC_USER_ID, DEST_USER_ID, STATUS, AMOUNT) VALUES('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')".format(
                 self.transactionS_TABLE_NAME,
                 timestamp,
                 type,
@@ -643,7 +643,7 @@ class Collection:
         return cls(id, owner_id, price, encrypted_content, preview, status)
 
     @classmethod
-    def new(cls, id, owner_id, raw_data, aes_key):
+    def new(cls, id, owner_id, raw_data, aes_key:str):
         """Create a new collection and add to database."""
         if Collection.db == None:
             raise RuntimeError(
@@ -652,7 +652,8 @@ class Collection:
         if cls.if_id_exist(id):
             raise AttributeError("Collection id already exists, please use another id.")
         price = cls._DEFAULT_PRICE
-        encrypted_content = cls._encrypt_content(raw_data, aes_key)
+        aes_bytes = base64.b64decode(aes_key.encode('utf-8'))
+        encrypted_content = cls._encrypt_content(raw_data, aes_bytes)
         preview = cls._gen_preview(raw_data)
         status = cls._STATUS_CONFIRMED
         collection = cls(id, owner_id, price, encrypted_content, preview, status)
@@ -717,17 +718,18 @@ class Collection:
         # print("Encrypt result:", result)
         return result
 
-    def _decrypte_content(data, aes_key) -> typing.Union[bytes, None]:
+    def _decrypte_content(data, aes_key:str) -> typing.Union[bytes, None]:
         """
         Decrypt content using AES (CTR mode, allow arbitrary length of data).
         @param data: json serialized string (e.g., {"nonce": '4Sa\we', "ciphertext": 'wgS2F=D3'})
         @return decrypted bytes data if succefully decrypt, otherwise None.
         """
+        aes_key_bytes = base64.b64decode(aes_key.encode('utf-8'))
         try:
             b64 = json.loads(data)
             nonce = base64.b64decode(b64["nonce"])
             ct = base64.b64decode(b64["ciphertext"])
-            cipher = AES.new(aes_key, AES.MODE_CTR, nonce=nonce)
+            cipher = AES.new(aes_key_bytes, AES.MODE_CTR, nonce=nonce)
             pt = cipher.decrypt(ct)
             # print("Decrypt result:", pt)
             return pt
@@ -750,7 +752,9 @@ class Collection:
     def _gen_preview(raw_data):
         """Generate low resolution thumbnail and return its bytes data."""
         PREVIEW_SIZE = (210, 294)  # default collection thubnail size (width, height)
-        img = Image.frombytes(raw_data).thumbnail(PREVIEW_SIZE)
+        
+        img = Image.open(io.BytesIO(raw_data))
+        img.thumbnail(PREVIEW_SIZE)
         img_byte_stream = io.BytesIO()
         img.save(img_byte_stream, format=img.format)
         return img_byte_stream.getvalue()
